@@ -9,13 +9,25 @@ try:
         if(userInput == "exit()"):
             sys.exit()
 
+
         userInput = userInput.split(" ")
         lenOfInput = len(userInput)
+
         if userInput[0] == "cd":
-            if os.path.isdir(currentPath + "/" + userInput[1]):
-                os.chdir(currentPath + "/" + userInput[1])  # implement a try-catch
+            rc = os.fork()
+            if rc < 0:
+                os.write(2, ("fork failed, returning %d\n" % rc).encode())
+                sys.exit(1)
+            elif rc == 0:
+                print("\n")
+                if os.path.isdir(currentPath + "/" + userInput[1]):
+                    os.chdir(currentPath + "/" + userInput[1])  # implement a try-catch
+                else:
+                    os.write(1, (userInput[1] + " is not a directory.\n").encode())
             else:
-                os.write(1, (userInput[1] + " is not a directory.\n").encode())
+                os.wait()
+
+
 
         if userInput[0] == "ls":
             directories = os.listdir()  #Get directories and files inside directory
