@@ -41,12 +41,12 @@ def execute(command):
         else:
             execute_command(command)
         os.write(2, ("Command %s not found\n" % command[0]).encode())
-        sys.exit(0)
+        sys.exit(1)
     else:
         child_pid_code = os.wait()
 
 
-def output_to_file(command):
+def output_redirection(command):
     command, file_path = [i.strip() for i in re.split('>', command)]
     file_path = os.getcwd() + '/' + file_path
     command = [i.strip() for i in re.split(' ', command)]
@@ -61,19 +61,20 @@ def output_to_file(command):
         os.set_inheritable(fd, True)
         os.dup(fd)
         execute_command(command)
-        sys.exit(0)
+        os.write(2, ("Command %s not found\n" % command[0]).encode())
+        sys.exit(1)
     else:
         child_pid_code = os.wait()
 
 
-def input_to_file(command):
+def input_redirection(command):
     command, file_path = [i.strip() for i in re.split('<', command)]
     file_path = os.getcwd() + '/' + file_path
     command = [i.strip() for i in re.split(' ', command)]
     rc = os.fork()
     if rc < 0:
         os.write(2, "Fork failed".encode())
-        sys.exit(0)
+        sys.exit(1)
     elif rc == 0:
         os.close(0)
         sys.stdin = open(file_path, 'r')
@@ -81,8 +82,56 @@ def input_to_file(command):
         os.set_inheritable(fd, True)
         os.dup(fd)
         execute_command(command)
+        os.write(2, ("Command %s not found\n" % command[0]).encode())
+        sys.exit(1)
     else:
         child_pid_code = os.wait()
+
+
+def pipe_command(command):
+    r, w = os.pipe()
+    for f in (r, w):
+        os.set_inheritable(f, True)
+
+    commands = [i.strip() for i in re.split('[\x7C]', command)]
+    main_process = True
+    subprocesses = []
+    even = 0
+    for command in commands:
+        even += 1
+        rc = os.fork()
+        if rc:
+            subprocesses.append(rc)
+        else:
+            main_process = False
+            if even % 2 != 0:
+                os.close(1)
+                write = os.dup(w)
+                for i in (r, w):
+                    os.close(i)
+
+                sys.stdout = os.fdopen(write, "w")
+                fd = sys.stdout.fileno()
+                os.set_inheritable(fd, True)
+            else:
+                os.close(0)
+                read = os.dup(r)
+                for i in (r, w):
+                    os.close(i)
+
+                sys.stdin = os.fdopen(read, "r")
+                fd = sys.stdin.fileno()
+                os.set_inheritable(fd, True)
+
+            command = [i.strip() for i in re.split(' ', command)]
+            execute_command(command)
+            break
+    if main_process:
+        for i in (r, w):
+            os.close(i)
+
+        for subprocess in subprocesses:
+            os.waitpid(subprocess, 0)
 
 
 def process_command(command):
@@ -92,10 +141,12 @@ def process_command(command):
         return
     elif "cd" in command:
         change_directory(command)
+    elif "|" in command:
+        pipe_command(command)
     elif ">" in command:
-        output_to_file(command)
+        output_redirection(command)
     elif "<" in command:
-        input_to_file(command)
+        input_redirection(command)
     else:
         execute(command)
 
@@ -116,4 +167,4 @@ if __name__ == '__main__':
             process_command(userInput)
 
     except KeyboardInterrupt:
-        os.write(1, "\nProcess Finished with exit code 0".encode())
+        os.write(1, "\nProcess finished with exit code 0".encode())
