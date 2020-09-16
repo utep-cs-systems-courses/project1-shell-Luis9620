@@ -4,100 +4,89 @@ import sys
 import re
 
 
-def change_directory(command):
-    current_path = os.getcwd()
-    command, selected_directory = re.split(" ", command)
-    if os.path.isdir(current_path + "/" + selected_directory):
-        os.chdir(current_path + "/" + selected_directory)
+def change_directory(cmd):  # Change directory
+    current_path = os.getcwd()  #Get the current path
+    if os.path.isdir(current_path + "/" + cmd[1]):  #Check if the given input is an actual directory
+        os.chdir(current_path + "/" + cmd[1])
 
 
-def execute_command(command):
+def execute_command(cmd):
     for directory in re.split(':', os.environ['PATH']):
-        program = "%s/%s" % (directory, command[0])
+        program = "%s/%s" % (directory, cmd[0])
         try:
-            os.execve(program, command, os.environ)
+            os.execve(program, cmd, os.environ)
         except FileNotFoundError:
             pass
         except ValueError:
             pass
 
 
-def execute_path(command):
+def execute_path(cmd):
     try:
-        os.execve(command[0], command, os.environ)
+        os.execve(cmd[0], cmd, os.environ)
     except FileNotFoundError:
         pass
 
 
-def execute(command):
+def execute(cmd):
     rc = os.fork()
     if rc < 0:
-        os.write(2, "fork failed".encode())
+        # os.write(2, "fork failed".encode())
         sys.exit()
     elif rc == 0:
-        command = [i.strip() for i in re.split(' ', command)]
-        if '/' in command[0]:
-            execute_path(command)
+        if '/' in cmd[0]:
+            execute_path(cmd[0])
         else:
-            execute_command(command)
-        os.write(2, ("Command %s not found\n" % command[0]).encode())
+            execute_command(cmd)
+        # os.write(2, ("Command %s not found\n" % command[0]).encode())
         sys.exit(1)
     else:
         child_pid_code = os.wait()
 
 
-def output_redirection(command):
-    command, file_path = [i.strip() for i in re.split('>', command)]
-    file_path = os.getcwd() + '/' + file_path
-    command = [i.strip() for i in re.split(' ', command)]
+def output_redirection(cmd):
     rc = os.fork()
     if rc < 0:
-        os.write(2, "Fork failed".encode())
         sys.exit(0)
     elif rc == 0:
         os.close(1)
-        sys.stdout = open(file_path, 'w+')
-        fd = sys.stdout.fileno()
-        os.set_inheritable(fd, True)
-        os.dup(fd)
-        execute_command(command)
-        os.write(2, ("Command %s not found\n" % command[0]).encode())
+        os.open(cmd[-1], os.O_CREAT | os.O_WRONLY);
+        os.set_inheritable(1, True)
+        cmd = cmd[0:cmd.index(">")]
+        execute_command(cmd)
         sys.exit(1)
     else:
         child_pid_code = os.wait()
 
 
-def input_redirection(command):
-    command, file_path = [i.strip() for i in re.split('<', command)]
-    file_path = os.getcwd() + '/' + file_path
-    command = [i.strip() for i in re.split(' ', command)]
+def input_redirection(cmd):
     rc = os.fork()
     if rc < 0:
-        os.write(2, "Fork failed".encode())
         sys.exit(1)
     elif rc == 0:
         os.close(0)
-        sys.stdin = open(file_path, 'r')
-        fd = sys.stdin.fileno()
-        os.set_inheritable(fd, True)
-        os.dup(fd)
-        execute_command(command)
-        os.write(2, ("Command %s not found\n" % command[0]).encode())
+        os.open(cmd[-1], os.O_RDONLY);
+        os.set_inheritable(0, True)
+        cmd = cmd[0:cmd.index("<")]
+        execute_command(cmd)
         sys.exit(1)
     else:
         child_pid_code = os.wait()
 
 
-def pipe_command(command):
+def pipe_command(cmd):
     r, w = os.pipe()
     for f in (r, w):
         os.set_inheritable(f, True)
-
-    commands = [i.strip() for i in re.split('[\x7C]', command)]
+    commands = ' '.join([str(elem) for elem in cmd])
+    pipes = commands.split("|")
+    prog1 = pipes[0].split()
+    prog2 = pipes[1].split()
+    pipes = (prog1, prog2)
     main_process = True
     subprocesses = []
     even = 0
-    for command in commands:
+    for cmd in pipes:
         even += 1
         rc = os.fork()
         if rc:
@@ -122,9 +111,7 @@ def pipe_command(command):
                 sys.stdin = os.fdopen(read, "r")
                 fd = sys.stdin.fileno()
                 os.set_inheritable(fd, True)
-
-            command = [i.strip() for i in re.split(' ', command)]
-            execute_command(command)
+            execute_command(cmd)
             break
     if main_process:
         for i in (r, w):
@@ -134,37 +121,46 @@ def pipe_command(command):
             os.waitpid(subprocess, 0)
 
 
-def process_command(command):
-    if "exit()" in command:
+def process_command(cmd):
+    if "exit()" in cmd:
         sys.exit(0)
-    elif command == "\n":
+    if not cmd:
+        pass
+    if '/' in cmd[0]:
+        execute_path(cmd)
+    elif cmd == "\n":
         return
-    elif "cd" in command:
-        change_directory(command)
-    elif "|" in command:
-        pipe_command(command)
-    elif ">" in command:
-        output_redirection(command)
-    elif "<" in command:
-        input_redirection(command)
+    elif "cd" in cmd:
+        change_directory(cmd)
+    elif "|" in cmd:
+        pipe_command(cmd)
+    elif ">" in cmd:
+        output_redirection(cmd)
+    elif "<" in cmd:
+        input_redirection(cmd)
     else:
-        execute(command)
+        execute(cmd)
 
-
-try:
-    sys.ps1 = os.environ['PS1']
-except KeyError:
-    sys.ps1 = '$ '
-
-if sys.ps1 is None:
-    sys.ps1 = '$ '
 
 if __name__ == '__main__':
     try:
         while True:
-            os.write(1, sys.ps1.encode())
-            userInput = os.read(0, 1024).decode()[:-1]
-            process_command(userInput)
+
+            pid = os.getpid()
+
+            if 'PS1' in os.environ:
+                os.write(1, (os.environ['PS1']).encode())
+                try:
+                    command = [str(n) for n in input().split()]
+                except EOFError:
+                    sys.exit(1)
+            else:
+                os.write(1, ('$ ').encode())  # otherwise type $
+                try:
+                    command = [str(n) for n in input().split()]
+                except EOFError:  # catch error
+                    sys.exit(1)
+            process_command(command)
 
     except KeyboardInterrupt:
         os.write(1, "\nProcess finished with exit code 0".encode())
