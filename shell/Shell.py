@@ -54,7 +54,7 @@ def output_redirection(cmd):
     if rc < 0:
         sys.exit(0)
     elif rc == 0:
-        os.close(1)
+        os.close(1)  # redirect child's stdout
         os.open(cmd[-1], os.O_CREAT | os.O_WRONLY);
         os.set_inheritable(1, True)
         cmd = cmd[0:cmd.index(">")]
@@ -72,7 +72,7 @@ def input_redirection(cmd):
     if rc < 0:
         sys.exit(1)
     elif rc == 0:
-        os.close(0)
+        os.close(0)  # redirect child's stdin
         os.open(cmd[-1], os.O_RDONLY);
         os.set_inheritable(0, True)
         cmd = cmd[0:cmd.index("<")]
