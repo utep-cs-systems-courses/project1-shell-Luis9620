@@ -41,7 +41,8 @@ def execute(cmd):
         # os.write(2, ("Command %s not found\n" % command[0]).encode())
         sys.exit(1)
     else:
-        child_pid_code = os.wait()
+        if not '&' in cmd:
+            child_pid_code = os.wait()
 
 
 def output_redirection(cmd):
@@ -49,14 +50,15 @@ def output_redirection(cmd):
     if rc < 0:
         sys.exit(0)
     elif rc == 0:
-        os.close(1)
+        os.close(1)  # redirect child's stdout
         os.open(cmd[-1], os.O_CREAT | os.O_WRONLY);
         os.set_inheritable(1, True)
         cmd = cmd[0:cmd.index(">")]
         execute_command(cmd)
         sys.exit(1)
     else:
-        child_pid_code = os.wait()
+        if not '&' in cmd:
+            child_pid_code = os.wait()
 
 
 def input_redirection(cmd):
@@ -64,14 +66,15 @@ def input_redirection(cmd):
     if rc < 0:
         sys.exit(1)
     elif rc == 0:
-        os.close(0)
+        os.close(0)  # redirect child's stdin
         os.open(cmd[-1], os.O_RDONLY);
         os.set_inheritable(0, True)
         cmd = cmd[0:cmd.index("<")]
         execute_command(cmd)
         sys.exit(1)
     else:
-        child_pid_code = os.wait()
+        if not '&' in cmd:
+            child_pid_code = os.wait()
 
 
 def pipe_command(cmd):
@@ -79,15 +82,17 @@ def pipe_command(cmd):
     for f in (r, w):
         os.set_inheritable(f, True)
     commands = ' '.join([str(elem) for elem in cmd])
-    pipes = commands.split("|")
-    prog1 = pipes[0].split()
-    prog2 = pipes[1].split()
-    pipes = (prog1, prog2)
+    commands = commands.split("|")
+    command1 = commands[0].split()
+    command2 = commands[1].split()
+    commands = (command1, command2)
     main_process = True
     subprocesses = []
     even = 0
-    for cmd in pipes:
+    for cmd in commands:
         even += 1
+        if '&' in cmd:
+            cmd.remove('&')
         rc = os.fork()
         if rc:
             subprocesses.append(rc)
@@ -118,15 +123,16 @@ def pipe_command(cmd):
             os.close(i)
 
         for subprocess in subprocesses:
-            os.waitpid(subprocess, 0)
+            if not '&' in cmd:
+                child_pid_code = os.wait()
 
 
-def process_command(cmd):
+def process_command(cmd):  # Select the command to execute
     if "exit()" in cmd:
         sys.exit(0)
     if not cmd:
         pass
-    if '/' in cmd[0]:
+    elif '/' in cmd[0]:
         execute_path(cmd)
     elif cmd == "\n":
         return
@@ -148,11 +154,11 @@ if __name__ == '__main__':
 
             pid = os.getpid()
 
-            if 'PS1' in os.environ:
+            if 'PS1' in os.environ:  # if we have PS1 in envirnment use
                 os.write(1, (os.environ['PS1']).encode())
                 try:
                     command = [str(n) for n in input().split()]
-                except EOFError:
+                except EOFError:  # catch error
                     sys.exit(1)
             else:
                 os.write(1, ('$ ').encode())  # otherwise type $
@@ -161,6 +167,5 @@ if __name__ == '__main__':
                 except EOFError:  # catch error
                     sys.exit(1)
             process_command(command)
-
     except KeyboardInterrupt:
         os.write(1, "\nProcess finished with exit code 0".encode())
