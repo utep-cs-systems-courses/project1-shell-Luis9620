@@ -29,6 +29,8 @@ def execute_path(cmd):
 
 
 def execute(cmd):
+    if '&' in cmd:
+        cmd.remove('&')
     rc = os.fork()
     if rc < 0:
         # os.write(2, "fork failed".encode())
@@ -46,11 +48,13 @@ def execute(cmd):
 
 
 def output_redirection(cmd):
+    if '&' in cmd:
+        cmd.remove('&')
     rc = os.fork()
     if rc < 0:
         sys.exit(0)
     elif rc == 0:
-        os.close(1)  # redirect child's stdout
+        os.close(1)
         os.open(cmd[-1], os.O_CREAT | os.O_WRONLY);
         os.set_inheritable(1, True)
         cmd = cmd[0:cmd.index(">")]
@@ -62,11 +66,13 @@ def output_redirection(cmd):
 
 
 def input_redirection(cmd):
+    if '&' in cmd:
+        cmd.remove('&')
     rc = os.fork()
     if rc < 0:
         sys.exit(1)
     elif rc == 0:
-        os.close(0)  # redirect child's stdin
+        os.close(0)
         os.open(cmd[-1], os.O_RDONLY);
         os.set_inheritable(0, True)
         cmd = cmd[0:cmd.index("<")]
@@ -154,17 +160,17 @@ if __name__ == '__main__':
 
             pid = os.getpid()
 
-            if 'PS1' in os.environ:  # if we have PS1 in envirnment use
+            if 'PS1' in os.environ:
                 os.write(1, (os.environ['PS1']).encode())
                 try:
                     command = [str(n) for n in input().split()]
-                except EOFError:  # catch error
+                except EOFError:
                     sys.exit(1)
             else:
-                os.write(1, ('$ ').encode())  # otherwise type $
+                os.write(1, ('$ ').encode())
                 try:
                     command = [str(n) for n in input().split()]
-                except EOFError:  # catch error
+                except EOFError:
                     sys.exit(1)
             process_command(command)
     except KeyboardInterrupt:
