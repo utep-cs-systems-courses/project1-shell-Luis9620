@@ -4,174 +4,125 @@ import sys
 import re
 
 
-def change_directory(cmd):  # Change directory
-    current_path = os.getcwd()  #Get the current path
-    if os.path.isdir(current_path + "/" + cmd[1]):  #Check if the given input is an actual directory
-        os.chdir(current_path + "/" + cmd[1])
-
-
-def execute_command(cmd):
-    for directory in re.split(':', os.environ['PATH']):
-        program = "%s/%s" % (directory, cmd[0])
+def execute(args):  # execute command
+    for directory in re.split(":", os.environ['PATH']): # try each directory in the path
+        program = "%s/%s" % (directory, args[0])    # Concatenate the directory and the program to execute
         try:
-            os.execve(program, cmd, os.environ)
-        except FileNotFoundError:
-            pass
-        except ValueError:
+            os.execve(program, args, os.environ)    # execute the path with arguments and environment
+        except FileNotFoundError:   # exception for not finding the file
             pass
 
 
-def execute_path(cmd):
+def execute_path(args):     # execute path
+    program = args[0]
     try:
-        os.execve(cmd[0], cmd, os.environ)
-    except FileNotFoundError:
+        os.execve(program, args, os.environ)  # execute path given
+    except FileNotFoundError:  # exception for not founding the file
         pass
 
 
-def execute(cmd):
-    if '&' in cmd:
-        cmd.remove('&')
-    rc = os.fork()
-    if rc < 0:
-        # os.write(2, "fork failed".encode())
-        sys.exit()
-    elif rc == 0:
-        if '/' in cmd[0]:
-            execute_path(cmd[0])
-        else:
-            execute_command(cmd)
-        # os.write(2, ("Command %s not found\n" % command[0]).encode())
+def output_redirection(args):
+    os.close(1) # Redirect child's stdout
+    os.open(args[-1], os.O_CREAT | os.O_WRONLY) # Get last element in the command and open it as read only or create file if it does not exist
+    os.set_inheritable(1, True) # Set the value of inheritable flag of the specified file descriptor(output).
+    args = args[0:args.index(">")] # Get the command before the '>'
+    execute(args)   # execute the command
+
+
+def input_redirect(args):
+    os.close(0) # Redirect child's stdin
+    os.open(args[-1], os.O_RDONLY)  # Get last element in the command and open it as read only
+    os.set_inheritable(0, True) # Set the value of inheritable flag of the specified file descriptor(input).
+    args = args[0:args.index("<")]   # get the command before the '>'
+    execute(args)   # execute the command
+
+
+def pipe(cmd):
+    args = ' '.join([str(elem) for elem in cmd])    # Separate each element in the command by an space  and cast it (string)
+    pipes = args.split("|") # Split each of the pipes
+    pipe1 = pipes[0].split()    # Separate each of the pipes
+    pipe2 = pipes[1].split()
+
+    pr, pw = os.pipe()  # Create pipe and return file descriptor for read and writing
+    for f in (pr, pw):
+        os.set_inheritable(f, True)     # Set the value of inheritable flag of the specified file descriptor(input-output).
+
+    pipe_fork = os.fork()   # Create the subprocess
+    if pipe_fork < 0:   # For any error in the creation of the fork
+        os.write(2, "fork failed".encode())
         sys.exit(1)
-    else:
-        if not '&' in cmd:
-            child_pid_code = os.wait()
 
+    elif pipe_fork == 0:    # Child process
+        os.close(1) # Redirect child's stdout
+        os.dup(pw)  # Duplicate the file descriptor(pw)-not inheritable
+        os.set_inheritable(1, True)     # Set the value of inheritable flag of the specified file descriptor(output).
+        for fd in (pr, pw):  # Redirect child's stdout-stdin
+            os.close(fd)
+        execute(pipe1)  # Execute pipe
 
-def output_redirection(cmd):
-    if '&' in cmd:
-        cmd.remove('&')
-    rc = os.fork()
-    if rc < 0:
-        sys.exit(0)
-    elif rc == 0:
-        os.close(1)  # redirect child's stdout
-        os.open(cmd[-1], os.O_CREAT | os.O_WRONLY);
-        os.set_inheritable(1, True)
-        cmd = cmd[0:cmd.index(">")]
-        execute_command(cmd)
-        sys.exit(1)
-    else:
-        if not '&' in cmd:
-            child_pid_code = os.wait()
-
-
-def input_redirection(cmd):
-    if '&' in cmd:
-        cmd.remove('&')
-    rc = os.fork()
-    if rc < 0:
-        sys.exit(1)
-    elif rc == 0:
-        os.close(0)  # redirect child's stdin
-        os.open(cmd[-1], os.O_RDONLY);
+    else:   # Parent process
+        os.close(0) # Redirect child's stdin
+        os.dup(pr)  # Duplicate the file descriptor(pr)-not inheritable
         os.set_inheritable(0, True)
-        cmd = cmd[0:cmd.index("<")]
-        execute_command(cmd)
+        for fd in (pw, pr):  # Redirect child's stdout-stdin
+            os.close(fd)
+        execute(pipe2)  # Execute pipe
+
+
+def execute_command(cmd):   #Select the interaction with the os
+    rc = os.fork()
+    arguments = cmd.copy()
+    if '&' in arguments:
+        arguments.remove('&')
+    if 'exit()' in arguments:
+        sys.exit(0)
+    if rc < 0:
+        os.write(2, "Fork failed, returning".encode())
         sys.exit(1)
+    elif rc == 0:
+        if '>' in arguments:
+            output_redirection(arguments)
+        if '<' in arguments:
+            input_redirect(arguments)
+        if '/' in arguments[0]:
+            execute_path(arguments)
+        if '|' in arguments:
+            pipe(arguments)
+        else:
+            execute(arguments)
     else:
-        if not '&' in cmd:
+        if '&' not in arguments:
             child_pid_code = os.wait()
 
-
-def pipe_command(cmd):
-    r, w = os.pipe()
-    for f in (r, w):
-        os.set_inheritable(f, True)
-    commands = ' '.join([str(elem) for elem in cmd])
-    commands = commands.split("|")
-    command1 = commands[0].split()
-    command2 = commands[1].split()
-    commands = (command1, command2)
-    main_process = True
-    subprocesses = []
-    even = 0
-    for cmd in commands:
-        even += 1
-        if '&' in cmd:
-            cmd.remove('&')
-        rc = os.fork()
-        if rc:
-            subprocesses.append(rc)
-        else:
-            main_process = False
-            if even % 2 != 0:
-                os.close(1)
-                write = os.dup(w)
-                for i in (r, w):
-                    os.close(i)
-
-                sys.stdout = os.fdopen(write, "w")
-                fd = sys.stdout.fileno()
-                os.set_inheritable(fd, True)
-            else:
-                os.close(0)
-                read = os.dup(r)
-                for i in (r, w):
-                    os.close(i)
-
-                sys.stdin = os.fdopen(read, "r")
-                fd = sys.stdin.fileno()
-                os.set_inheritable(fd, True)
-            execute_command(cmd)
-            break
-    if main_process:
-        for i in (r, w):
-            os.close(i)
-
-        for subprocess in subprocesses:
-            if not '&' in cmd:
-                child_pid_code = os.wait()
-
-
-def process_command(cmd):  # Select the command to execute
-    if "exit()" in cmd:
-        sys.exit(0)
-    if not cmd:
-        pass
-    elif '/' in cmd[0]:
-        execute_path(cmd)
-    elif cmd == "\n":
-        return
-    elif "cd" in cmd:
-        change_directory(cmd)
-    elif "|" in cmd:
-        pipe_command(cmd)
-    elif ">" in cmd:
-        output_redirection(cmd)
-    elif "<" in cmd:
-        input_redirection(cmd)
-    else:
-        execute(cmd)
-
-
+# File descriptor
+# 0 is for std input
+# 1 is for std output
+# 2 is for std error
 if __name__ == '__main__':
-    try:
-        while True:
+    while True:
+        if 'PS1' in os.environ:
+            os.write(1, (os.environ['PS1']).encode())
+            try:
+                command = [str(n) for n in input().split()]
+            except EOFError:  # catch error
+                sys.exit(1)
+        else:
+            os.write(1, '$ '.encode())
+            try:
+                command = [str(n) for n in input().split()]
+            except EOFError:
+                sys.exit(1)
 
-            pid = os.getpid()
+        if "cd" in command:  # If there is a cd in the command given, change directory to the 2nd argument
+            try:
+                os.chdir(command[1])  # Change current directory to specified
+            except FileNotFoundError:  # exception for not finding the file
+                pass
+            continue
+        if not command:
+            pass
+        else:
+            execute_command(command)
 
-            if 'PS1' in os.environ:
-                os.write(1, (os.environ['PS1']).encode())
-                try:
-                    command = [str(n) for n in input().split()]
-                except EOFError:
-                    sys.exit(1)
-            else:
-                os.write(1, ('$ ').encode())
-                try:
-                    command = [str(n) for n in input().split()]
-                except EOFError:
-                    sys.exit(1)
-            process_command(command)
-    except KeyboardInterrupt:
-        os.write(1, "\nProcess finished with exit code 0".encode())
+
+
